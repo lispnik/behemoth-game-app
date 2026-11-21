@@ -9,3 +9,6 @@ build/
 
 # Personal signing settings.
 /local.env
+
+# Python bytecode from tools/*.py.
+__pycache__/
