@@ -42,16 +42,26 @@ rubble and may keep moving after they fire.  Infantry climb ridges.")
 
 (defparameter *system-kinds*
   '((:cannon     :name "Main cannon" :attack 5 :range 3 :damage 2 :defense 6 :count 1)
-    (:autocannon :name "Autocannon"  :attack 3 :range 2 :damage 1 :defense 3 :count 4)
+    (:autocannon :name "Autocannon"  :attack 3 :range 2 :damage 1 :defense 3)
     (:rocket     :name "Rocket"      :attack 5 :range 5 :damage 2 :defense 2 :count 2
                  :single-use t))
-  "The Behemoth's weapons.  A hit on one destroys it.  A rocket is gone once fired.")
+  "The Behemoth's weapons.  A hit on one destroys it.  A rocket is gone once
+fired.  How many autocannons it has depends on the difficulty.")
 
 (defun system-property (kind property)
   (getf (rest (assoc kind *system-kinds*)) property))
 
 (defparameter *max-drive* 24)
-(defparameter *drive-defense* 5)
+
+(defparameter *difficulties*
+  '((:easy   :name "Easy"   :drive-defense 4 :autocannons 3)
+    (:normal :name "Normal" :drive-defense 5 :autocannons 4)
+    (:hard   :name "Hard"   :drive-defense 6 :autocannons 5))
+  "How tough the Behemoth is: its drive's defense and how many autocannons it
+carries.  Tuned so the built-in computer player wins about 70%, 50% and 30%.")
+
+(defun difficulty-property (difficulty property)
+  (getf (rest (assoc difficulty *difficulties*)) property))
 (defparameter *deploy-first-row* 6 "Defenders deploy on this row and below.")
 
 (defun drive-speed (drive)
@@ -94,7 +104,10 @@ rubble and may keep moving after they fire.  Infantry climb ridges.")
 
 (defstruct game
   (cols *cols*) (rows *rows*) terrain (units '()) behemoth rng
-  (turn 0) (phase :deploy) (log '()) outcome seed (next-id 0))
+  (turn 0) (phase :deploy) (log '()) outcome seed (next-id 0) (difficulty :normal))
+
+(defun drive-defense (game)
+  (difficulty-property (game-difficulty game) :drive-defense))
 
 (defun note (game control &rest arguments)
   (push (apply #'format nil control arguments) (game-log game)))
@@ -168,9 +181,10 @@ infantry behind, and mortars beside the bunker."
             (if next (setf hex next) (return))))))
     terrain))
 
-(defun new-game (&key (seed 1))
-  "A battle in its deployment phase."
-  (let ((game (make-game :rng (make-rng seed) :seed seed)))
+(defun new-game (&key (seed 1) (difficulty :normal))
+  "A battle in its deployment phase.  DIFFICULTY is :EASY, :NORMAL or :HARD."
+  (assert (assoc difficulty *difficulties*) (difficulty) "Unknown difficulty ~s." difficulty)
+  (let ((game (make-game :rng (make-rng seed) :seed seed :difficulty difficulty)))
     (loop
       (setf (game-units game) '()
             (game-next-id game) 0
@@ -188,7 +202,9 @@ infantry behind, and mortars beside the bunker."
               (make-behemoth :col (hex-col start) :row (hex-row start)
                              :systems (loop with id = 0
                                             for (kind . properties) in *system-kinds*
-                                            nconc (loop repeat (getf properties :count)
+                                            nconc (loop repeat (if (eq kind :autocannon)
+                                                                   (difficulty-property difficulty :autocannons)
+                                                                   (getf properties :count))
                                                         collect (make-sys :id (incf id) :kind kind)))))
         ;; A map with no way through for the Behemoth is no battle.
         (when (behemoth-route game) (return))))
@@ -272,7 +288,7 @@ Defenders may pass through each other but not stop together."
 
 (defun target-defense (game target)
   (if (eq target :drive)
-      *drive-defense*
+      (drive-defense game)
       (system-property (sys-kind (find-system (game-behemoth game) target)) :defense)))
 
 (defun target-alive-p (game target)
@@ -338,6 +354,17 @@ events, or NIL if it cannot fire."
                           (live-systems b)))
              (finish :won "The Behemoth is stopped short of the bunker."))
             (t '())))))
+
+;;; ------------------------------------------------------------------
+;;; the score
+
+(defun battle-score (game)
+  "What a won battle is worth: 10 points for each hit point your defenders
+have left and 20 for each the bunker has.  A battle not won scores 0."
+  (if (eq (game-phase game) :won)
+      (loop for u in (game-units game)
+            sum (* (unit-hp u) (if (combat-unit-p u) 10 20)))
+      0))
 
 ;;; ------------------------------------------------------------------
 ;;; the Behemoth's turn

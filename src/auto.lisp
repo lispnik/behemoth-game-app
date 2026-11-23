@@ -1,9 +1,11 @@
 ;;;; auto.lisp -- a plain computer player for the defenders.
 ;;;;
 ;;;; Used for autoplay in the simulator and for balance runs on the host.
-;;;; Not clever: every defender closes to its range and shoots, at the drive
-;;;; when the Behemoth is near the bunker, otherwise at whichever weapon it
-;;;; is likeliest to kill, weighted by what that weapon could do.
+;;;; It plays the strategy that won most often in balance runs: kill the main
+;;;; cannon first, since a stopped Behemoth with its cannon still in range of
+;;;; the bunker is not beaten; then put every shot into the drive; once the
+;;;; drive is wrecked, the weapons.  A defender moves up only when it can
+;;;; fire that turn, rather than walking into the Behemoth's guns.
 
 (in-package #:behemoth)
 
@@ -13,28 +15,23 @@
 (defun choose-target (game unit)
   (let* ((b (game-behemoth game))
          (weapons (live-systems b))
-         (turns-left (let ((speed (behemoth-speed b)))
-                       (if (zerop speed)
-                           most-positive-fixnum
-                           (/ (behemoth-distance-to-bunker game) speed)))))
-    (if (or (null weapons)
-            (and (plusp (behemoth-drive b)) (<= turns-left 3)))
-        (if (plusp (behemoth-drive b)) :drive (and weapons (sys-id (first weapons))))
-        (sys-id (first (sort (copy-list weapons) #'>
-                             :key (lambda (s)
-                                    (* (threat s)
-                                       (target-chance game unit (sys-id s))))))))))
+         (cannon (find :cannon weapons :key #'sys-kind)))
+    (cond (cannon (sys-id cannon))
+          ((plusp (behemoth-drive b)) :drive)
+          (weapons
+           (sys-id (first (sort (copy-list weapons) #'>
+                                :key (lambda (s)
+                                       (* (threat s)
+                                          (target-chance game unit (sys-id s)))))))))))
 
 (defun best-firing-hex (game unit)
   "Where UNIT should move: in range of the Behemoth, as far from it as its
-range allows; failing that, as close as it can get."
+range allows.  NIL if no hex it can reach this turn is in range."
   (let* ((there (behemoth-hex (game-behemoth game)))
          (range (unit-range unit))
-         (hexes (cons (unit-hex unit) (reachable-hexes game unit))))
-    (first (sort hexes #'<
-                 :key (lambda (h)
-                        (let ((d (hex-distance h there)))
-                          (if (<= d range) (- range d) (+ 10 d))))))))
+         (hexes (remove-if-not (lambda (h) (<= (hex-distance h there) range))
+                               (cons (unit-hex unit) (reachable-hexes game unit)))))
+    (first (sort hexes #'> :key (lambda (h) (hex-distance h there))))))
 
 (defun auto-step (game)
   "Make one defender action.  Returns its events, or NIL when every
@@ -49,7 +46,7 @@ defender is done for the turn."
               ((not (unit-moved unit))
                (let ((hex (best-firing-hex game unit)))
                  (setf (unit-moved unit) t)
-                 (unless (equal hex (unit-hex unit))
+                 (when (and hex (not (equal hex (unit-hex unit))))
                    (return (list (move-unit game (unit-id unit) hex)))))))))))
 
 (defun auto-play-turn (game)

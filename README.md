@@ -39,9 +39,26 @@ block everything but infantry. The Behemoth flattens rubble as it goes. When
 it rolls over a unit, infantry always lose a squad and anything else is hit
 half the time. Survivors are thrown aside.
 
-The numbers were tuned so that the built-in naive computer player wins about
-half its games. A player who deploys and focuses fire with some thought
-should do better.
+The built-in computer player kills the main cannon first, then shoots the
+drive, and moves a defender up only when it can fire that turn. It wins about
+half its games (50% over 1,000 seeds). Stopping the drive alone is not
+enough, since a stopped Behemoth with its cannon in range of the bunker can
+still win, and deploying further back only costs you shots.
+
+### Difficulty and score
+
+Pick the difficulty with the button beside **?** before the battle starts.
+It changes how tough the Behemoth is; the battlefield stays the same.
+
+| Difficulty | Drive defense | Autocannons | Built-in player wins |
+|---|---|---|---|
+| Easy | 4 | 3 | 70% |
+| Normal | 5 | 4 | 50% |
+| Hard | 6 | 5 | 28% |
+
+A won battle scores 10 points for each hit point your defenders have left and
+20 for each one the bunker has left, out of 320. The app keeps wins, losses
+and best score for each difficulty.
 
 ## Building and testing
 

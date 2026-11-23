@@ -9,7 +9,7 @@
    #:hex #:hex-col #:hex-row #:hex-distance #:hex-neighbors #:on-map-p
    ;; unit kinds and systems
    #:kind-property #:system-property #:hit-chance #:drive-speed
-   #:*max-drive* #:*drive-defense* #:*cols* #:*rows* #:*deploy-first-row*
+   #:*max-drive* #:*cols* #:*rows* #:*deploy-first-row*
    ;; units
    #:unit #:unit-id #:unit-kind #:unit-col #:unit-row #:unit-hp
    #:unit-move-left #:unit-fired #:unit-moved #:unit-hex #:unit-attack
@@ -28,5 +28,8 @@
    #:reachable #:reachable-hexes #:move-unit #:in-range-p
    #:target-chance #:target-defense #:fire-at #:end-turn
    #:behemoth-distance-to-bunker
+   ;; difficulty and score
+   #:*difficulties* #:difficulty-property #:game-difficulty #:drive-defense
+   #:battle-score
    ;; a computer player, for autoplay and balance runs
    #:auto-step #:auto-play-turn))

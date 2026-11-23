@@ -434,3 +434,77 @@
             do (auto-play-turn game))
       (is (member (game-phase game) '(:won :lost))
           "seed ~d did not finish: phase ~a" seed (game-phase game)))))
+
+;;; ------------------------------------------------------------------
+;;; the computer player
+
+(defun system-of (game kind)
+  (find kind (behemoth-systems (game-behemoth game)) :key #'sys-kind))
+
+(test auto-player-shoots-the-cannon-then-the-drive
+  (let* ((game (clear-board (battle 3)))
+         (lancer (second (only-units game :lancer)))
+         (cannon (system-of game :cannon)))
+    (is (eql (sys-id cannon) (behemoth::choose-target game lancer)))
+    (setf (sys-alive cannon) nil)
+    (is (eq :drive (behemoth::choose-target game lancer)))
+    (setf (behemoth-drive (game-behemoth game)) 0)
+    (let ((target (behemoth::choose-target game lancer)))
+      (is (member target (mapcar #'sys-id (live-systems (game-behemoth game))))))))
+
+(test auto-player-moves-up-only-to-fire
+  (let* ((game (clear-board (battle 3)))
+         (lancer (second (only-units game :lancer))))
+    (put-behemoth game 4 2)
+    ;; Out of reach: a Lancer moves 3 and shoots 2, and this is 9 away.
+    (place game (unit-id lancer) 4 11)
+    (auto-step game)
+    (is (equal (hex 4 11) (unit-hex lancer)))
+    ;; Within reach: it moves to the edge of its range and fires.
+    (setf (unit-moved lancer) nil (unit-move-left lancer) 3)
+    (place game (unit-id lancer) 4 6)
+    (let ((events (loop for step = (auto-step game) while step append step)))
+      (is (= 2 (hex-distance (unit-hex lancer) (hex 4 2))))
+      (is (find :fire events :key #'first)))))
+
+;;; ------------------------------------------------------------------
+;;; difficulty and score
+
+(defun count-systems (game kind)
+  (count kind (behemoth-systems (game-behemoth game)) :key #'sys-kind))
+
+(test difficulty-sets-the-behemoth
+  (is (eq :normal (game-difficulty (new-game :seed 4))))
+  (loop for (difficulty autocannons defense) in '((:easy 3 4) (:normal 4 5) (:hard 5 6))
+        do (let ((game (new-game :seed 4 :difficulty difficulty)))
+             (is (= autocannons (count-systems game :autocannon)))
+             (is (= 1 (count-systems game :cannon)))
+             (is (= 2 (count-systems game :rocket)))
+             (is (= defense (target-defense game :drive))))))
+
+(test difficulty-changes-the-odds-on-the-drive
+  (flet ((chance (difficulty)
+           (let ((game (new-game :seed 4 :difficulty difficulty)))
+             (target-chance game (find :lancer (game-units game) :key #'unit-kind) :drive))))
+    (is (> (chance :easy) (chance :normal) (chance :hard)))
+    (is (= 4/9 (chance :normal)))))
+
+(test difficulty-keeps-the-map
+  ;; The same seed is the same battlefield at every difficulty.
+  (let ((easy (new-game :seed 9 :difficulty :easy))
+        (hard (new-game :seed 9 :difficulty :hard)))
+    (is (equalp (game-terrain easy) (game-terrain hard)))
+    (is (equal (behemoth-hex (game-behemoth easy)) (behemoth-hex (game-behemoth hard))))))
+
+(test unknown-difficulty
+  (signals error (new-game :seed 1 :difficulty :impossible)))
+
+(test score-counts-what-survives
+  (let ((game (clear-board (battle 5))))
+    (is (= 0 (battle-score game)))
+    (only-units game :lancer :infantry)
+    (setf (behemoth::game-phase game) :won)
+    ;; Lancer 2 hits and infantry 3 squads at 10, bunker 5 hits at 20.
+    (is (= (+ 20 30 100) (battle-score game)))
+    (setf (behemoth::game-phase game) :lost)
+    (is (= 0 (battle-score game)))))

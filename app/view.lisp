@@ -33,6 +33,8 @@
 (defvar *action-button* nil)
 (defvar *action-label* nil)
 (defvar *record-label* nil)
+(defvar *difficulty-button* nil)
+(defvar *difficulty-label* nil)
 (defvar *overlay* nil)
 (defvar *help* nil)
 (defvar *selected* nil "Id of the selected defender.")
@@ -45,6 +47,25 @@
 (defun defaults () (objc:invoke "NSUserDefaults" "standardUserDefaults"))
 (defun saved (key) (objc:invoke (defaults) "integerForKey:" key))
 (defun save (key value) (objc:invoke (defaults) "setInteger:forKey:" value key))
+
+;;; The difficulty is saved as its position here, so a missing key -- 0 --
+;;; means Normal.  Normal's record keeps the keys it had before there were
+;;; difficulties.
+(defparameter *difficulty-codes* '(:normal :easy :hard))
+(defparameter *difficulty-cycle* '(:easy :normal :hard))
+
+(defun saved-difficulty ()
+  (or (nth (saved "difficulty") *difficulty-codes*) :normal))
+
+(defun save-difficulty (difficulty)
+  (save "difficulty" (position difficulty *difficulty-codes*)))
+
+(defun record-key (difficulty what)
+  (if (eq difficulty :normal)
+      what
+      (format nil "~(~a-~a~)" difficulty what)))
+
+(defun record (difficulty what) (saved (record-key difficulty what)))
 
 ;;; ------------------------------------------------------------------
 ;;; nodes
@@ -314,9 +335,12 @@
 
 (defparameter *chip-y* 718d0)
 (defparameter *drive-y* 752d0)
-(defparameter *chip-width* 44d0)
 
-(defun chip-x (index) (+ 195 (* (- index 3) (+ *chip-width* 5))))
+(defun chip-pitch () (float (min 49 (floor 376 (max 1 (length *chips*)))) 1d0))
+(defun chip-width () (- (chip-pitch) 5))
+
+(defun chip-x (index)
+  (+ 195 (* (- index (/ (1- (length *chips*)) 2)) (chip-pitch))))
 
 (defun short-name (sys)
   (ecase (sys-kind sys) (:cannon "CAN") (:autocannon "AC") (:rocket "RKT")))
@@ -339,15 +363,19 @@
                                             204 *drive-y*)
                                         5)))
   ;; The weapons, as chips.
+  ;; How many there are depends on the difficulty, so lay them out after
+  ;; counting them.
   (setf *chips*
         (loop for sys in (behemoth-systems (game-behemoth *game*))
-              for i from 0
-              collect (let ((chip (add *world* (at (rounded *chip-width* 36 7 (rgb 0.3 0.1 0.08))
-                                                   (chip-x i) *chip-y*))))
+              collect (let ((chip (add *world* (rounded 44 36 7 (rgb 0.3 0.1 0.08)))))
                         (list (sys-id sys) chip
                               (add chip (at (text (short-name sys) 12 (rgb 1 1 1)) 0 6))
                               (add chip (at (text "" 11 (rgb 1 1 0.6) :font "AvenirNext-Heavy")
-                                            0 -9)))))))
+                                            0 -9))))))
+  (loop for (nil chip) in *chips*
+        for i from 0
+        do (objc:invoke chip "setXScale:" (/ (chip-width) 44))
+           (at chip (chip-x i) *chip-y*)))
 
 (defun selected-unit ()
   (and *selected* (find-unit *game* *selected*)))
@@ -363,7 +391,12 @@
          (drive (behemoth-drive b))
          (shooter (let ((u (selected-unit))) (and (can-fire-p u) u))))
     (set-text *drive-label* (format nil "speed ~d" (behemoth-speed b)))
-    (set-text *record-label* (format nil "won ~d  lost ~d" (saved "wins") (saved "losses")))
+    (let ((difficulty (game-difficulty *game*)))
+      (set-text *record-label*
+                (format nil "~a  won ~d  lost ~d~[~:;  best ~:*~d~]"
+                        (difficulty-property difficulty :name)
+                        (record difficulty "wins") (record difficulty "losses")
+                        (record difficulty "best"))))
     (loop for segment in *drive-segments*
           for i from 0
           do (objc:invoke segment "setColor:"
@@ -392,6 +425,7 @@
 
 (defparameter *button-y* 26d0)
 (defparameter *action-x* 300d0)
+(defparameter *difficulty-x* 172d0)
 
 (defun build-footer ()
   (setf *status-label* (add *world* (at (text "" 14 (rgb 1 1 1) :font "AvenirNext-DemiBold" :align :left)
@@ -403,6 +437,9 @@
     (add new (text "New" 15 (rgb 1 1 1) :font "AvenirNext-DemiBold")))
   (let ((help (add *world* (at (rounded 44 36 10 (rgb 1 1 1 0.1) (rgb 1 1 1 0.3) 1.5d0) 108 *button-y*))))
     (add help (text "?" 18 (rgb 1 1 1))))
+  (setf *difficulty-button* (add *world* (at (rounded 74 36 10 (rgb 1 1 1 0.1) (rgb 1 1 1 0.3) 1.5d0)
+                                             *difficulty-x* *button-y*)))
+  (setf *difficulty-label* (add *difficulty-button* (text "" 14 (rgb 1 1 1) :font "AvenirNext-DemiBold")))
   (setf *action-button* (add *world* (at (rounded 170 40 12 (rgb 0.8 0.3 0.2) (rgb 1 0.7 0.5) 2)
                                          *action-x* *button-y*)))
   (setf *action-label* (add *action-button* (text "" 16 (rgb 1 1 1) :font "AvenirNext-Heavy"))))
@@ -430,6 +467,10 @@
   (loop for label in *log-labels*
         for line in (append (game-log *game*) '("" ""))
         do (set-text label line))
+  ;; The difficulty can be changed only before the battle starts.
+  (set-text *difficulty-label* (difficulty-property (game-difficulty *game*) :name))
+  (objc:invoke *difficulty-button* "setAlpha:"
+               (if (and (eq (game-phase *game*) :deploy) (not *busy*)) 1d0 0.35d0))
   (set-text *action-label* (case (game-phase *game*)
                              (:deploy "START BATTLE")
                              (t "END TURN")))
@@ -604,8 +645,14 @@
 ;;; the end of a battle
 
 (defun finish-battle ()
-  (let ((won (eq (game-phase *game*) :won)))
-    (save (if won "wins" "losses") (1+ (saved (if won "wins" "losses"))))
+  (let* ((won (eq (game-phase *game*) :won))
+         (difficulty (game-difficulty *game*))
+         (score (battle-score *game*))
+         (best (and won (> score (record difficulty "best")))))
+    (let ((key (record-key difficulty (if won "wins" "losses"))))
+      (save key (1+ (saved key))))
+    (when best
+      (save (record-key difficulty "best") score))
     (sound (if won "won" "lost"))
     (setf *selected* nil)
     (refresh)
@@ -617,7 +664,10 @@
                            :font "AvenirNext-Heavy")
                      0 46))
       (add panel (at (text (game-outcome *game*) 15 (rgb 1 1 1 0.9) :font "AvenirNext-DemiBold") 0 6))
-      (add panel (at (text (format nil "~d turn~:p" (game-turn *game*) (game-turn *game*)) 13
+      (add panel (at (text (format nil "~a · ~d turn~:p~@[ · score ~d~]~:[~; · new best!~]"
+                                   (difficulty-property difficulty :name)
+                                   (game-turn *game*) (and won score) best)
+                           13
                            (rgb 1 1 1 0.6) :font "AvenirNext-Medium")
                      0 -20))
       (add panel (at (text "Tap for a new battle" 14 (rgb 1 1 1 0.75) :font "AvenirNext-Medium") 0 -55))
@@ -683,8 +733,17 @@
   (cond ((within x y 202 *drive-y* 150 14) (try-fire :drive) t)
         (t (loop for (id) in *chips*
                  for i from 0
-                 when (within x y (chip-x i) *chip-y* (/ *chip-width* 2) 20)
+                 when (within x y (chip-x i) *chip-y* (/ (chip-width) 2) 20)
                    do (try-fire id) (return t)))))
+
+(defun change-difficulty ()
+  "Before the battle, step to the next difficulty on the same battlefield."
+  (when (eq (game-phase *game*) :deploy)
+    (let* ((now (game-difficulty *game*))
+           (next (or (second (member now *difficulty-cycle*)) (first *difficulty-cycle*))))
+      (save-difficulty next)
+      (haptic 0)
+      (new-battle (game-seed *game*)))))
 
 (defun tap-action ()
   (case (game-phase *game*)
@@ -725,6 +784,7 @@
         ((within x y 108 *button-y* 24 20) (show-help))
         (*overlay* (new-battle))
         (*busy*)
+        ((within x y *difficulty-x* *button-y* 37 20) (change-difficulty))
         ((within x y *action-x* *button-y* 88 22) (tap-action))
         ((> y (+ *map-top* 4)) (tap-target x y))
         (t (let ((hex (hex-at-point x y)))
@@ -749,7 +809,7 @@
   (clrhash *unit-nodes*)
   (setf *chips* nil *drive-segments* nil *hex-nodes* nil)
   (when *world* (remove-node *world*))
-  (setf *game* (new-game :seed (or seed (get-universal-time)))
+  (setf *game* (new-game :seed (or seed (get-universal-time)) :difficulty (saved-difficulty))
         *world* (add *scene* (objc:invoke "SKNode" "node"))
         *overlay* nil *help* nil *selected* nil *busy* nil)
   (fit-world t)
@@ -762,7 +822,7 @@
   (build-panel)
   (build-footer)
   (refresh)
-  (format t "BEHEMOTH: new battle, seed ~d~%" (game-seed *game*))
+  (format t "BEHEMOTH: new battle, seed ~d, ~(~a~)~%" (game-seed *game*) (game-difficulty *game*))
   (finish-output))
 
 ;;; ------------------------------------------------------------------
